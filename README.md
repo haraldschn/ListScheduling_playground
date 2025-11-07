@@ -3,12 +3,12 @@ Playground to implement list-scheduling in C++.
 
 ## Overview
 
-The intial implementation is based on List-Scheduling for high-level synthesis (2x MUL / 1x ALU) functional units.
-(see Branch initial)
-
-The further progress is scheduling instructions towards individual functional units.
-To speedup calculation, each instruction starts from the earliest possibile issue time.
+The current implementation changed towards scheduling instructions into individual functional units (i.e. finding a feasible schedule for a specific instruction trace). Instruction-nodes are added iteratively.
+To speedup calculation, each instruction starts from its earliest possibile issue time.
 If any previous instruction starts using the same functional units at a later time, we need to reschedule (starting from this instruction).
+
+The intial implementation is based on List-Scheduling for high-level synthesis (2x MUL / 1x ALU) functional units.
+(see Branch hls_example)
 
 ## Usage
 
@@ -35,5 +35,6 @@ Priorities are based on tuple:
     
     (operands_ready, issue_ready, id)
 
-<img title="Example dependency graph" alt="Alt text" src="./images/dependecyGraph.png" style="background-color: white">
+# License
 
+The code in this repository is released under the MIT License. Use of this source code is governed by a MIT-style license that can be found in the LICENSE file.

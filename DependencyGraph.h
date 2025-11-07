@@ -1,5 +1,5 @@
-#ifndef RV32_DEPGRAPH_H
-#define RV32_DEPGRAPH_H
+#ifndef DEPGRAPH_H
+#define DEPGRAPH_H
 
 #include <cstdint>
 
@@ -10,15 +10,6 @@
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
-
-namespace rv32_ooo {
-
-enum class Edge_Type {
-    EMPTY,
-    RAW,
-    WAR,
-    WAW
-};
 
 // Functional Unit set at Decode stage
 // (using enum F_Type as numeric value)
@@ -50,6 +41,8 @@ const size_t s_k[] = {1, 1, 1, 1, 1, 1, 1, 1};
 
 class DependencyGraph {
    private:
+    bool debug;
+
     void print_set_vec(std::vector<uint64_t>& input) {
         std::cout << "{";
 
@@ -64,18 +57,13 @@ class DependencyGraph {
         std::cout << input[input.size() - 1] << "}\t";
     };
 
-    struct Edge {
-        uint64_t from, to;
-        Edge_Type type;
-    };
-
     struct Node {
         // ordering asscending by (operands_ready, issue_ready, id)
         uint64_t operands_ready = UINT64_MAX;
-        uint64_t issue_ready;
-        uint64_t id;
+        uint64_t issue_ready = 0;
+        uint64_t id = 0;
         // node information
-        F_Type type;
+        F_Type type = F_Type::EMPTY;
         uint64_t latency = 1;
         uint64_t t_LR = 0;
         // Vector of predecessor nodes
@@ -112,70 +100,51 @@ class DependencyGraph {
         }
     };
 
-    std::unordered_map<uint64_t, Node> nodes;
+    std::vector<Node> nodes;
+
     std::priority_queue<Node, std::vector<Node>, CompareOpReady> nodes_ready;
 
     std::unordered_set<uint64_t> ready_nodes;
     std::unordered_set<uint64_t> active_nodes;
 
-    std::vector<Edge> edges;
-
-    std::unordered_set<uint64_t> sink_nodes;
-
    public:
-    DependencyGraph() {
-        nodes[0].id = 0;
-        nodes[0].type = F_Type::EMPTY;
-        nodes[0].latency = 0;
+    DependencyGraph(bool debug_in = false) {
+        debug = debug_in;
+
+        Node root_node;
+        root_node.id = 0;
+        root_node.type = F_Type::EMPTY;
+        root_node.latency = 0;
+        nodes.push_back(root_node);
     };
     ~DependencyGraph() = default;
 
-    void add_node(uint64_t id, F_Type type, uint64_t issue_ready) {
+    uint64_t add_node(F_Type type, uint64_t issue_ready) {
+        Node node_new;
+        
+        node_new.issue_ready = issue_ready;
+
+        node_new.type = type;
+        node_new.latency = 1;
+
+        nodes.push_back(node_new);
+        uint64_t id = nodes.size()-1;
         nodes[id].id = id;
-        nodes[id].issue_ready = issue_ready;
 
-        nodes[id].type = type;
-        nodes[id].latency = 1;
-
-        sink_nodes.insert(id);
         ready_nodes.insert(id);
 
         add_edge_RAW(0, id);
+
+        return id;
     }
 
     void add_edge_RAW(const uint64_t& from, const uint64_t& to) {
         // Remove dummy edges to source node (if other edge is added)
-        if (!edges.empty() && edges.back().from == 0 && edges.back().to == to) {
-            edges.pop_back();
+        if (!nodes[to].predc.empty()) {
             nodes[to].predc.pop_back();
         }
 
-        edges.push_back({from, to, Edge_Type::RAW});
         nodes[to].predc.push_back(from);
-    }
-    void add_edge_WAR(const uint64_t& from, const uint64_t& to) {
-        // Remove dummy edges to source node (if other edge is added)
-        if (!edges.empty() && edges.back().from == 0 && edges.back().to == to) {
-            edges.pop_back();
-            nodes[to].predc.pop_back();
-        }
-
-        edges.push_back({from, to, Edge_Type::WAR});
-        nodes[to].predc.push_back(from);
-
-        sink_nodes.erase(from);
-    }
-    void add_edge_WAW(const uint64_t& from, const uint64_t& to) {
-        // Remove dummy edges to source node (if other edge is added)
-        if (!edges.empty() && edges.back().from == 0 && edges.back().to == to) {
-            edges.pop_back();
-            nodes[to].predc.pop_back();
-        }
-
-        edges.push_back({from, to, Edge_Type::WAW});
-        nodes[to].predc.push_back(from);
-
-        sink_nodes.erase(from);
     }
 
     std::vector<uint64_t> find_candidate_operations(int k, uint64_t t_act) {
@@ -228,7 +197,7 @@ class DependencyGraph {
     }
 
     uint64_t schedule(uint64_t curr_node, uint64_t t_curr) {
-        // Find a better way to allow handling operands_ready > t_curr nodes
+        // Find a better way to allow handling nodes with operands_ready > t_curr 
         // priority queue with operands_ready ??
         auto temp(nodes_ready);
         while (!temp.empty()) {
@@ -247,7 +216,6 @@ class DependencyGraph {
         uint64_t t_act = t_curr;
 
         while (nodes[curr_node].t_LR == 0) {
-            std::cout << "t_act:" << t_act << "\n";
             for (int k = F_Type::DIV; k < F_Type::F_SIZE; k++) {
                 std::vector<uint64_t> U_act = find_candidate_operations(k, t_act);
                 std::vector<uint64_t> T_act = find_running_operations(k, t_act);
@@ -271,7 +239,8 @@ class DependencyGraph {
                     active_nodes.insert(id_max);
                 }
 
-                if (nodes[curr_node].type == k) {
+                if (nodes[curr_node].type == k && debug) {
+                    std::cout << "t_act:" << t_act << "\n";
                     std::cout << "k: " << F_Names[k];
                     std::cout << "\tU_act:";
                     print_set_vec(U_act);
@@ -279,10 +248,11 @@ class DependencyGraph {
                     print_set_vec(T_act);
                     std::cout << "S_act:";
                     print_set_vec(S_act);
+                    std::cout << "\n";
                 }
             }
             t_act += 1;
-            std::cout << "\n";
+            
         }
 
         //active_nodes.clear();
@@ -314,6 +284,4 @@ class DependencyGraph {
     }
 };
 
-}  // namespace rv32_ooo
-
-#endif  // RV32_DEPGRAPH_H
+#endif  // DEPGRAPH_H

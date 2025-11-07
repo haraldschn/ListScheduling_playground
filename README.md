@@ -30,7 +30,8 @@ or:
 
 ### simple_test Example
 
-The schedule is calculated for following dependency graph:
+The schedule (in simple_test) is calculated for the data-dependecy graph of a small instruction trace.
+
 Priorities are based on tuple: 
     
     (operands_ready, issue_ready, id)

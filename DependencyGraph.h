@@ -19,8 +19,7 @@ enum F_Type {
     MUL,
     BR,
     ALU,
-    LD,
-    ST,
+    LSU,
     F_SIZE
 };
 
@@ -30,14 +29,8 @@ const std::string F_Names[] = {
     "MUL",
     "BR",
     "ALU",
-    "LD",
-    "ST",
+    "LSU",
     "F_SIZE"};
-
-// Max instr in FUs
-const size_t a_k[] = {1, 1, 2, 1, 1, 2, 1, 1};
-// Max instr starting Operation
-const size_t s_k[] = {1, 1, 1, 1, 1, 1, 1, 1};
 
 class DependencyGraph {
    private:
@@ -66,6 +59,9 @@ class DependencyGraph {
         F_Type type = F_Type::EMPTY;
         uint64_t latency = 1;
         uint64_t t_LR = 0;
+
+        uint8_t a_k = 1; // parallel instructions in functional unit
+        uint8_t s_k = 1; // starting instruction per cycle
         // Vector of predecessor nodes
         std::vector<uint64_t> predc;
     };
@@ -102,7 +98,7 @@ class DependencyGraph {
 
     std::vector<Node> nodes;
 
-    std::priority_queue<Node, std::vector<Node>, CompareOpReady> nodes_ready;
+    std::priority_queue<Node, std::vector<Node>, CompareOpReady> prio_queue_nodes;
 
     std::unordered_set<uint64_t> ready_nodes;
     std::unordered_set<uint64_t> active_nodes;
@@ -119,13 +115,15 @@ class DependencyGraph {
     };
     ~DependencyGraph() = default;
 
-    uint64_t add_node(F_Type type, uint64_t issue_ready) {
+    uint64_t add_node(F_Type type, uint64_t issue_ready, uint8_t a_k = 1, uint8_t s_k = 1) {
         Node node_new;
         
         node_new.issue_ready = issue_ready;
 
         node_new.type = type;
         node_new.latency = 1;
+        node_new.a_k = a_k;
+        node_new.s_k = s_k;
 
         nodes.push_back(node_new);
         uint64_t id = nodes.size()-1;
@@ -147,6 +145,24 @@ class DependencyGraph {
         nodes[to].predc.push_back(from);
     }
 
+    void purge_finished_nodes(uint64_t t_curr) {
+        std::vector<uint64_t> remove_active;
+
+        for (uint64_t id : active_nodes) {
+            auto& v = nodes[id];
+            if (v.t_LR > 0) {
+                uint64_t node_finish = v.t_LR + v.latency;
+                if (node_finish < t_curr) {
+                    remove_active.push_back(v.id);
+                }
+            }
+        }
+
+        for (uint64_t id : remove_active) {
+            active_nodes.erase(id);
+        }
+    }
+
     std::vector<uint64_t> find_candidate_operations(int k, uint64_t t_act) {
         std::vector<uint64_t> ans;
         for (uint64_t id : ready_nodes) {
@@ -166,7 +182,7 @@ class DependencyGraph {
                 if (all_finished) {
                     ans.push_back(id);
                     nodes[id].operands_ready = max_pred_finished;
-                    nodes_ready.push(nodes[id]);
+                    prio_queue_nodes.push(nodes[id]);
                 }
             }
         }
@@ -175,7 +191,6 @@ class DependencyGraph {
 
     std::vector<uint64_t> find_running_operations(int k, uint64_t t_act) {
         std::vector<uint64_t> ans;
-        std::vector<uint64_t> remove_active;
 
         for (uint64_t id : active_nodes) {
             auto& v = nodes[id];
@@ -183,32 +198,27 @@ class DependencyGraph {
                 uint64_t node_finish = v.t_LR + v.latency;
                 if (node_finish > t_act) {
                     ans.push_back(id);
-                } else {
-                    remove_active.push_back(id);
                 }
             }
-        }
-
-        for (uint64_t id : remove_active) {
-            active_nodes.erase(id);
         }
 
         return ans;
     }
 
     uint64_t schedule(uint64_t curr_node, uint64_t t_curr) {
-        // Find a better way to allow handling nodes with operands_ready > t_curr 
-        // priority queue with operands_ready ??
-        auto temp(nodes_ready);
-        while (!temp.empty()) {
-            uint64_t id = temp.top().id;
+        purge_finished_nodes(t_curr);
+
+        // Handling nodes with operands_ready > t_curr 
+        // priority queue ordered by deacreasing operands_ready -> currently usable (DON'T TRY to copy this prio_queue_nodes)
+        while (!prio_queue_nodes.empty()) {
+            uint64_t id = prio_queue_nodes.top().id;
             if (nodes[id].operands_ready > t_curr) {
                 ready_nodes.insert(id);
                 nodes[id].t_LR = 0;
             } else {
                 break;
             }
-            temp.pop();
+            prio_queue_nodes.pop();
         }
 
         nodes[0].t_LR = 1;
@@ -228,7 +238,7 @@ class DependencyGraph {
 
                 std::vector<uint64_t> S_act;
 
-                while (!pq.empty() && (S_act.size() < s_k[k]) && (S_act.size() + T_act.size() < a_k[k])) {
+                while (!pq.empty() && (S_act.size() < pq.top().s_k) && (S_act.size() + T_act.size() < pq.top().a_k)) {
                     int id_max = pq.top().id;
                     pq.pop();
 
@@ -255,12 +265,20 @@ class DependencyGraph {
             
         }
 
-        //active_nodes.clear();
         return nodes[curr_node].t_LR;
     }
 
     void get_latency(uint64_t curr_node, uint64_t t_curr) {
         nodes[curr_node].latency = t_curr;
+    }
+
+    void get_WB_time(uint64_t curr_node, uint64_t t_curr) {
+        if (t_curr > nodes[curr_node].t_LR + 1) {
+            nodes[curr_node].latency = t_curr - (nodes[curr_node].t_LR + 1);
+            //std::cout << "latency: " << nodes[curr_node].latency << "\n";
+        } else {
+            //std::cout << "latency: 1 (else)\n";
+        }
     }
 
     /// helper functions for std output

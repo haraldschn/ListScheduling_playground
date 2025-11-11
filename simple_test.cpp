@@ -14,11 +14,11 @@ int main(int argc, char **argv) {
     // Always nodes added with edges to predecessors
     // add implicit
     // graph.add_edge_RAW(0,1); // Added edge from root node if no predecessor exists
-    node_id = graph.add_node(LD, 2);
+    node_id = graph.add_node(LSU, 2, 2);
     graph.schedule(node_id, 2);
     graph.get_latency(node_id, 2);
 
-    node_id = graph.add_node(LD, 3);
+    node_id = graph.add_node(LSU, 3, 2);
     graph.schedule(node_id, 3);
     graph.get_latency(node_id, 2);
 
@@ -33,13 +33,13 @@ int main(int argc, char **argv) {
     graph.schedule(node_id, 5);
     graph.get_latency(node_id, 1);
 
-    node_id = graph.add_node(MUL, 6);
+    node_id = graph.add_node(MUL, 6, 2);
     graph.add_edge_RAW(1,node_id);
     graph.add_edge_RAW(4,node_id);
     graph.schedule(node_id, 6);
     graph.get_latency(node_id, 2);
 
-    node_id = graph.add_node(MUL, 7);
+    node_id = graph.add_node(MUL, 7, 2);
     graph.add_edge_RAW(3,node_id);
     graph.schedule(node_id, 7);
     graph.get_latency(node_id, 2);
@@ -51,13 +51,13 @@ int main(int argc, char **argv) {
     graph.get_latency(node_id, 1);
 
     // Store
-    node_id = graph.add_node(ST, 9);
+    node_id = graph.add_node(LSU, 9, 1);
     graph.add_edge_RAW(7,node_id);
     graph.schedule(node_id, 9);
     graph.get_latency(node_id, 1);
 
     // Load
-    node_id = graph.add_node(LD, 10);
+    node_id = graph.add_node(LSU, 10, 2);
     graph.schedule(node_id, 10);
     graph.get_latency(node_id, 2);
 

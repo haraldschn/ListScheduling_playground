@@ -138,7 +138,7 @@ class DependencyGraph {
 
     void add_edge_RAW(const uint64_t& from, const uint64_t& to) {
         // Remove dummy edges to source node (if other edge is added)
-        if (!nodes[to].predc.empty()) {
+        if (!nodes[to].predc.empty() && nodes[to].predc[0] == 0) {
             nodes[to].predc.pop_back();
         }
 

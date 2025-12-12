@@ -1,77 +1,67 @@
 #include<iostream>
 
-#include "DependencyGraph.h"
+#include "ResourceScheduling.h"
+#include "ResourceDefinition.h"
 
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
     bool debug_output = true;
 
-    DependencyGraph graph(debug_output);
+    ResourceGraph graph(RES_Type::SIZE, debug_output);
 
-    uint64_t node_id = 0;
+    std::vector<uint64_t> nodes_IF;
+    std::vector<uint64_t> nodes_ID;
+    std::vector<uint64_t> nodes_EX;
+    std::vector<uint64_t> nodes_WB;
 
-    // Always nodes added with edges to predecessors
-    // add implicit
-    // graph.add_edge_RAW(0,1); // Added edge from root node if no predecessor exists
-    node_id = graph.add_node(LSU, 2, 2);
-    graph.schedule(node_id, 2);
-    graph.get_latency(node_id, 2);
+    // Always nodes added with edges to their predecessors
+    // 
 
-    node_id = graph.add_node(LSU, 3, 2);
-    graph.schedule(node_id, 3);
-    graph.get_latency(node_id, 2);
+    nodes_IF.push_back(graph.add_parent_node(IF_stage, 1));
+    graph.add_edge(0, nodes_IF.back());
 
-    node_id = graph.add_node(DIV, 4);
-    graph.add_edge_RAW(1,node_id);
-    graph.add_edge_RAW(2,node_id);
-    graph.schedule(node_id, 4);
-    graph.get_latency(node_id, 4);
+    uint64_t IF1_idx = graph.add_node(IF1_substage, 1, 1, 1, nodes_IF.back());
+    graph.add_edge(0, IF1_idx);
 
-    node_id = graph.add_node(ALU, 5);
-    graph.add_edge_RAW(1,node_id);
-    graph.schedule(node_id, 5);
-    graph.get_latency(node_id, 1);
+    uint64_t IF2_idx = graph.add_node(IF2_substage, 1, 1, 1, nodes_IF.back());
+    graph.add_edge(IF1_idx, IF2_idx);
 
-    node_id = graph.add_node(MUL, 6, 2);
-    graph.add_edge_RAW(1,node_id);
-    graph.add_edge_RAW(4,node_id);
-    graph.schedule(node_id, 6);
-    graph.get_latency(node_id, 2);
+    nodes_ID.push_back(graph.add_node(ID_stage, 1));
+    graph.add_edge(0, nodes_ID.back());
+    graph.add_edge(nodes_IF.back(), nodes_ID.back());
 
-    node_id = graph.add_node(MUL, 7, 2);
-    graph.add_edge_RAW(3,node_id);
-    graph.schedule(node_id, 7);
-    graph.get_latency(node_id, 2);
+    graph.add_edge(IF2_idx, nodes_ID.back());
 
-    node_id = graph.add_node(ALU, 8);
-    graph.add_edge_RAW(2,node_id);
-    graph.add_edge_RAW(6,node_id);
-    graph.schedule(node_id, 8);
-    graph.get_latency(node_id, 1);
+    nodes_EX.push_back(graph.add_node(EX_stage, 1, 4));
+    graph.add_edge(0, nodes_EX.back());
+    graph.add_edge(nodes_ID.back(), nodes_EX.back());
 
-    // Store
-    node_id = graph.add_node(LSU, 9, 1);
-    graph.add_edge_RAW(7,node_id);
-    graph.schedule(node_id, 9);
-    graph.get_latency(node_id, 1);
+    nodes_WB.push_back(graph.add_node(WB_stage, 1));
+    graph.add_edge(0, nodes_WB.back());
+    graph.add_edge(nodes_EX.back(), nodes_WB.back());
 
-    // Load
-    node_id = graph.add_node(LSU, 10, 2);
-    graph.schedule(node_id, 10);
-    graph.get_latency(node_id, 2);
+    nodes_IF.push_back(graph.add_node(IF_stage, 1));
+    graph.add_edge(nodes_IF[0], nodes_IF.back());
+    
+    nodes_ID.push_back(graph.add_node(ID_stage, 1));
+    graph.add_edge(nodes_ID[0], nodes_ID.back());
+    graph.add_edge(nodes_IF.back(), nodes_ID.back());
 
-    node_id = graph.add_node(ALU, 11);
-    graph.add_edge_RAW(9,node_id);
-    graph.schedule(node_id, 11);
-    graph.get_latency(node_id, 1);
+    nodes_EX.push_back(graph.add_node(EX_stage, 1));
+    graph.add_edge(nodes_EX[0], nodes_EX.back());
+    graph.add_edge(nodes_ID.back(), nodes_EX.back());
+
+    nodes_WB.push_back(graph.add_node(WB_stage, 1));
+    graph.add_edge(nodes_WB[0], nodes_WB.back());
+    graph.add_edge(nodes_EX.back(), nodes_WB.back());
+
+    graph.schedule(1, true);
 
     for (size_t i = 1; i < graph.get_nodes_len() && debug_output; i++)
     {
         std::cout << "id:" << i << "\t,prio:" <<  graph.get_priority_str(i) << "\n";
     }
-
-    
 
     return 0;
 }

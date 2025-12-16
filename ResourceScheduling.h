@@ -18,13 +18,29 @@ class ResourceGraph {
    private:
     bool debug;
 
-    int type_length = 1;
+    void print_set(std::unordered_set<uint64_t>& input) {
+        std::cout << "{";
 
+        if (input.empty()) {
+            std::cout << "}\t";
+            return;
+        }
+
+        for (auto it = input.begin(); it != input.end();) {
+            std::cout << *it;
+            if (++it != input.end()) {
+                std::cout << ", ";
+            }
+        }
+
+        std::cout << "}\t";
+    };
+
+    int type_length = 1;
     struct Node {
         uint64_t parent = 0;  // parent stage (0 if none)
-        // ordering asscending by (operands_ready, instr_idx, node_id)
+        // ordering asscending by (operands_ready, node_id)
         uint64_t operands_ready = UINT64_MAX;
-        uint64_t instr_idx = 0;
         uint64_t id = 0;
 
         // Enum in CPU specific PerformanceModel used for type identifier
@@ -35,10 +51,12 @@ class ResourceGraph {
         uint64_t latency = UINT16_MAX;
         uint64_t t_LR = 0;
 
-        uint32_t children_unfinished = 0;
+        int children_unfinished = -1;
 
         std::vector<uint64_t> preds;
         std::vector<uint64_t> succs;
+
+        std::vector<uint64_t> exit_cond;
     };
 
     // this is the structure which implements the
@@ -48,10 +66,6 @@ class ResourceGraph {
             // operands_ready in ascending order.
             if (a.operands_ready != b.operands_ready) {
                 return a.operands_ready > b.operands_ready;  // lower first
-            }
-            // issue_ready in ascending order.
-            if (a.instr_idx != b.instr_idx) {
-                return a.instr_idx > b.instr_idx;  // lower second
             }
             // id in ascending order.
             return a.id > b.id;  // lower third
@@ -103,10 +117,8 @@ class ResourceGraph {
     };
     ~ResourceGraph() = default;
 
-    uint64_t add_parent_node(int type, uint64_t instr_idx, uint8_t cap = 1) {
+    uint64_t add_parent_node(int type, uint8_t cap = 1) {
         Node node_new;
-
-        node_new.instr_idx = instr_idx;
 
         node_new.type = type;
         node_new.capacity = cap;
@@ -115,17 +127,13 @@ class ResourceGraph {
         uint64_t id = nodes.size() - 1;
         nodes[id].id = id;
 
-        ready_nodes.insert(id);
-
-        nodes[id].children_unfinished = 1;
+        nodes[id].children_unfinished = 0;
 
         return id;
     }
 
-    uint64_t add_node(int type, uint64_t instr_idx, uint64_t latency = 1, uint8_t cap = 1, uint64_t parent_idx = 0) {
+    uint64_t add_node(int type, uint64_t latency = 1, uint8_t cap = 1, uint64_t parent_idx = 0) {
         Node node_new;
-
-        node_new.instr_idx = instr_idx;
 
         node_new.type = type;
         node_new.latency = latency;
@@ -138,13 +146,21 @@ class ResourceGraph {
         if (parent_idx != 0) {
             nodes[id].parent = parent_idx;
             nodes[parent_idx].children_unfinished += 1;
+
+            for (uint64_t p : nodes[parent_idx].preds) {
+                add_edge(p, id);
+            }
+
+            if (nodes[parent_idx].preds.empty()) {
+                ready_nodes.insert(id);
+            }
         }
 
         return id;
     }
 
     void add_edge(const uint64_t& from, const uint64_t& to) {
-        if(from != 0) {
+        if (from != 0) {
             nodes[to].preds.push_back(from);
             nodes[from].succs.push_back(to);
         } else {
@@ -152,66 +168,98 @@ class ResourceGraph {
         }
     }
 
-    void find_candidate_operations(uint32_t k, uint64_t t) {
-        std::vector<uint64_t> ans;
-        for (uint64_t id : ready_nodes) {
-            auto& v = nodes[id];
-
-            uint64_t t_parent = 1;
-            if (v.parent != 0) {
-                t_parent = nodes[v.parent].t_LR;
-            }
-
-            if (v.type == k && v.t_LR == 0 && t_parent > 0) {
-                bool all_finished = true;
-                uint64_t max_pred_finished = 0;
-                for (uint64_t p : v.preds) {
-                    uint64_t t_pred_finish = nodes[p].t_LR + nodes[p].latency;
-                    max_pred_finished = std::max(max_pred_finished, t_pred_finish);
-
-                    if (nodes[p].t_LR == 0 || t_pred_finish > t) {
-                        all_finished = false;
-                    }
-                }
-
-                if (all_finished) {
-                    U_act[k].insert(v.id);
-                    v.operands_ready = max_pred_finished;
-                }
-            }
-        }
+    void add_exit_cond(const uint64_t& id, const uint64_t& cond) {
+        nodes[id].exit_cond.push_back(cond);
     }
 
-    void find_running_operations(uint32_t k, uint64_t t) {
-        std::unordered_set<uint64_t> ans;
+    void find_candidate_operations(uint64_t t) {
         std::vector<uint64_t> delete_stack;
 
         for (uint64_t id : ready_nodes) {
-            auto& v = nodes[id];
-            if (v.type == k && v.t_LR > 0) {
-                uint64_t node_finish = v.t_LR + v.latency;
-                if (node_finish > t) {
-                    ans.insert(v.id);
-                } else {
-                    delete_stack.push_back(v.id);
+            bool all_finished = true;
+            uint64_t max_pred_finished = 0;
+            for (uint64_t p : nodes[id].preds) {
+                uint64_t t_pred_finish = nodes[p].t_LR + nodes[p].latency;
+                // Predecessor order influences runtime
+                if (nodes[p].t_LR == 0 || t_pred_finish > t) {
+                    all_finished = false;
+                    break;
                 }
+                max_pred_finished = std::max(max_pred_finished, t_pred_finish);
+            }
+
+            if (all_finished) {
+                uint32_t k = nodes[id].type;
+                U_act[k].insert(nodes[id].id);
+                delete_stack.push_back(id);
+                nodes[id].operands_ready = max_pred_finished;
             }
         }
 
         for (uint64_t id : delete_stack) {
             ready_nodes.erase(id);
         }
+    }
 
-        T_act[k] = ans;
+    void find_running_operations(uint64_t t) {
+        bool add_candidates = false;
+        std::vector<uint64_t> delete_stack;
+
+        for (int k = 1; k < type_length; k++) {
+            for (uint64_t id : S_act[k]) {
+                T_act[k].insert(id);
+            }
+
+            for (uint64_t id : T_act[k]) {
+                uint64_t node_finish = nodes[id].t_LR + nodes[id].latency;
+                if (node_finish <= t) {
+                    delete_stack.push_back(id);
+
+                    for (uint64_t cond_id : nodes[id].exit_cond) {
+                        uint64_t cond_finish = nodes[cond_id].t_LR + nodes[cond_id].latency;
+
+                        if (nodes[cond_id].t_LR == 0 || cond_finish > t) {
+                            delete_stack.pop_back();
+                            nodes[id].latency += 1;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (uint64_t id : delete_stack) {
+            uint32_t k = nodes[id].type;
+            T_act[k].erase(id);
+
+            uint64_t parent_id = nodes[id].parent;
+            if (parent_id != 0) {
+                nodes[parent_id].children_unfinished -= 1;
+
+                if (nodes[parent_id].children_unfinished == 0) {
+                    nodes[parent_id].latency = t - nodes[parent_id].t_LR;
+                    uint32_t parent_k = nodes[parent_id].type;
+                    T_act[parent_k].erase(parent_id);
+                    // Adding succesor of parent
+                    add_candidates |= true;
+                }
+            }
+        }
+
+        if (add_candidates) {
+            find_candidate_operations(t);
+        }
     }
 
     void schedule(uint64_t t_enter, bool finish_schedule = false) {
         nodes[0].t_LR = 1;
 
-        while (t_curr <= t_enter || (finish_schedule && !ready_nodes.empty())) {
+        while (t_curr <= t_enter || (finish_schedule && ready_nodes.size() > 0)) {
+            find_candidate_operations(t_curr);
+            find_running_operations(t_curr);
+
             for (int k = 1; k < type_length; k++) {
-                find_candidate_operations(k, t_curr);
-                find_running_operations(k, t_curr);
+                S_act[k].clear();
 
                 // pq could be represented by using a priority_queue for U_act ?
                 std::priority_queue<Node, std::vector<Node>, CompareNodes> pq;
@@ -219,11 +267,14 @@ class ResourceGraph {
                     pq.push(nodes[u]);
                 }
 
-                // TODO: use S_act in next iteration ??
-                S_act[k].clear();
                 while (!pq.empty() && (S_act[k].size() + T_act[k].size() < pq.top().capacity)) {
                     int id_max = pq.top().id;
                     pq.pop();
+
+                    uint64_t parent_id = nodes[id_max].parent;
+                    if (parent_id != 0 && nodes[parent_id].t_LR == 0) {
+                        continue;
+                    }
 
                     S_act[k].insert(id_max);
                     nodes[id_max].t_LR = t_curr;
@@ -231,15 +282,6 @@ class ResourceGraph {
                     // Add succesors to ready nodes
                     for (uint64_t s : nodes[id_max].succs) {
                         ready_nodes.insert(s);
-                    }
-
-                    if (nodes[id_max].parent != 0) {
-                        uint64_t parent_id = nodes[id_max].parent;
-                        nodes[parent_id].children_unfinished -= 1;
-
-                        if (nodes[parent_id].children_unfinished == 1) {
-                            nodes[parent_id].latency = t_curr - nodes[parent_id].t_LR;
-                        }
                     }
                 }
 
@@ -276,12 +318,18 @@ class ResourceGraph {
         ret_strs << "(";
         ret_strs << nodes[id].operands_ready;
         ret_strs << ",";
-        ret_strs << nodes[id].instr_idx;
-        ret_strs << ",";
         ret_strs << nodes[id].id;
         ret_strs << ")";
 
         return ret_strs.str();
+    }
+
+    uint64_t get_node_t_start(uint64_t curr_node_id) {
+        return nodes[curr_node_id].t_LR - 1;
+    }
+
+    uint64_t get_node_t_end(uint64_t curr_node_id) {
+        return nodes[curr_node_id].t_LR + nodes[curr_node_id].latency - 1;
     }
 };
 

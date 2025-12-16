@@ -17,7 +17,7 @@ const std::string RES_Names[] = {
     "IF2_substage",
     "F_SIZE"};
 
-void print_set(std::unordered_set<uint64_t>& input) {
+/* void print_set(std::unordered_set<uint64_t>& input) {
     std::cout << "{";
 
     if (input.empty()) {
@@ -33,6 +33,6 @@ void print_set(std::unordered_set<uint64_t>& input) {
     }
 
     std::cout << "}\t";
-};
+}; */
 
 #endif
